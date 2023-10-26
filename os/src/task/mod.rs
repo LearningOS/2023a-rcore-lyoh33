@@ -14,8 +14,11 @@ mod switch;
 #[allow(clippy::module_inception)]
 mod task;
 
+use crate::config::MAX_SYSCALL_NUM;
 use crate::loader::{get_app_data, get_num_app};
+use crate::mm::{vp_to_pp, VirtAddr, MapPermission, any_mapped, any_unmapped};
 use crate::sync::UPSafeCell;
+use crate::timer::get_time_ms;
 use crate::trap::TrapContext;
 use alloc::vec::Vec;
 use lazy_static::*;
@@ -153,6 +156,7 @@ impl TaskManager {
             panic!("All applications completed!");
         }
     }
+
 }
 
 /// Run the first task in task list.
@@ -201,4 +205,67 @@ pub fn current_trap_cx() -> &'static mut TrapContext {
 /// Change the current 'Running' task's program break
 pub fn change_program_brk(size: i32) -> Option<usize> {
     TASK_MANAGER.change_current_program_brk(size)
+}
+
+/// translate virtual address pointer to current tast's real address pointer
+pub fn into_pa(p: *const u8) -> *const u8{
+    let token = TASK_MANAGER.get_current_token();
+    vp_to_pp(token, p)
+}
+
+/// return current task start time
+pub fn curtask_runtime() -> usize{
+    let task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    let blk = &task_manager.tasks[cur];
+    let time = get_time_ms() - blk.task_runtime;
+    time
+}
+
+/// return current task's syscall times
+pub fn curtask_syscall_times() -> [u32; MAX_SYSCALL_NUM]{
+    let task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    let blk = &task_manager.tasks[cur];
+    let syscall_times = blk.task_syscall_times;
+    syscall_times
+}
+
+/// increase syscall_id call times by 1
+pub fn inc_syscall_times(syscall_id: usize){
+    let mut task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    task_manager.tasks[cur].task_syscall_times[syscall_id] += 1;
+}
+
+/// return true if any region in [start_va, end_va) in current task is mapped
+pub fn curtask_any_mapped(start_va: VirtAddr, end_va: VirtAddr) -> bool{
+    let task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    let token = task_manager.tasks[cur].memory_set.token();
+    any_mapped(token, start_va, end_va)
+}
+
+/// return true if any region in [start_va, end_va) in current task isn't mapped
+pub fn curtask_any_unmapped(start_va: VirtAddr, end_va: VirtAddr) -> bool{
+    let task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    let token = task_manager.tasks[cur].memory_set.token();
+    any_unmapped(token, start_va, end_va)
+}
+
+/// insert into current task's virtual memory region with address from
+/// start_va to end_va with permission
+/// assert no area conflict
+pub fn insert_curtask_framed_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission,){
+    let mut task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    task_manager.tasks[cur].memory_set.insert_framed_area(start_va, end_va, permission);
+}
+
+/// remove current task's virtual memory region
+pub fn remove_curtask_framed_area(start_va: VirtAddr, end_va: VirtAddr){
+    let mut task_manager = TASK_MANAGER.inner.exclusive_access();
+    let cur = task_manager.current_task;
+    task_manager.tasks[cur].memory_set.remove_framed_area(start_va, end_va);
 }
