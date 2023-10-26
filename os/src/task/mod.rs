@@ -23,11 +23,13 @@ mod task;
 
 use crate::loader::get_app_data_by_name;
 use alloc::sync::Arc;
+use crate::config::MAX_SYSCALL_NUM;
+use crate::mm::{vp_to_pp, VirtAddr, MapPermission, any_mapped, any_unmapped};
+use crate::timer::get_time_ms;
 use lazy_static::*;
 pub use manager::{fetch_task, TaskManager};
 use switch::__switch;
 pub use task::{TaskControlBlock, TaskStatus};
-
 pub use context::TaskContext;
 pub use id::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 pub use manager::add_task;
@@ -114,4 +116,55 @@ lazy_static! {
 ///Add init process to the manager
 pub fn add_initproc() {
     add_task(INITPROC.clone());
+}
+
+/// translate virtual address pointer to current tast's real address pointer
+pub fn into_pa(p: *const u8) -> *const u8{
+    let token = current_user_token();
+    vp_to_pp(token, p)
+}
+
+/// return current task start time
+pub fn curtask_runtime() -> usize{
+    let cur_runtime = current_task().unwrap().runtime();
+    let time = get_time_ms() - cur_runtime;
+    time
+}
+
+/// return current task's syscall times
+pub fn curtask_syscall_times() -> [u32; MAX_SYSCALL_NUM]{
+    let cur_syscall_times = current_task().unwrap().syscall_times();
+    cur_syscall_times
+}
+
+/// increase syscall_id call times by 1
+pub fn inc_syscall_times(syscall_id: usize){
+    let task_manager = current_task().unwrap();
+    task_manager.inner_exclusive_access().task_syscall_times[syscall_id] += 1;
+}
+
+/// return true if any region in [start_va, end_va) in current task is mapped
+pub fn curtask_any_mapped(start_va: VirtAddr, end_va: VirtAddr) -> bool{
+    let token = current_user_token();
+    any_mapped(token, start_va, end_va)
+}
+
+/// return true if any region in [start_va, end_va) in current task isn't mapped
+pub fn curtask_any_unmapped(start_va: VirtAddr, end_va: VirtAddr) -> bool{
+    let token = current_user_token();
+    any_unmapped(token, start_va, end_va)
+}
+
+/// insert into current task's virtual memory region with address from
+/// start_va to end_va with permission
+/// assert no area conflict
+pub fn insert_curtask_framed_area(start_va: VirtAddr, end_va: VirtAddr, permission: MapPermission,){
+    let task_manager = current_task().unwrap();
+    task_manager.inner_exclusive_access().memory_set.insert_framed_area(start_va, end_va, permission);
+}
+
+/// remove current task's virtual memory region
+pub fn remove_curtask_framed_area(start_va: VirtAddr, end_va: VirtAddr){
+    let task_manager = current_task().unwrap();
+    task_manager.inner_exclusive_access().memory_set.remove_framed_area(start_va, end_va);
 }

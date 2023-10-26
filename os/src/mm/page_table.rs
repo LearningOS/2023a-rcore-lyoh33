@@ -1,6 +1,8 @@
 //! Implementation of [`PageTableEntry`] and [`PageTable`].
 use super::{frame_alloc, FrameTracker, PhysAddr, PhysPageNum, StepByOne, VirtAddr, VirtPageNum};
 use alloc::string::String;
+
+use crate::config::PAGE_SIZE;
 use alloc::vec;
 use alloc::vec::Vec;
 use bitflags::*;
@@ -212,4 +214,50 @@ pub fn translated_refmut<T>(token: usize, ptr: *mut T) -> &'static mut T {
         .translate_va(VirtAddr::from(va))
         .unwrap()
         .get_mut()
+}
+/// translate virtual address pointer to physical address pointer
+pub fn vp_to_pp(token: usize, vp: *const u8) -> *const u8{
+    let page_table = PageTable::from_token(token);
+    let vpn = VirtAddr(vp as usize).floor();
+    let pte = page_table.translate(vpn).unwrap();
+    let pa = pte.ppn().0 * PAGE_SIZE + VirtAddr(vp as usize).page_offset();
+    pa as *const u8
+}
+
+/// return true if any region in [start_va, end_va) is mapped
+pub fn any_mapped(token: usize, start_va: VirtAddr, end_va: VirtAddr) -> bool{
+    let start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+    let mut vpn = start_vpn;
+    let page_table = PageTable::from_token(token);
+    while vpn.0 < end_vpn.0{
+        if let Some(pte) = page_table.translate(vpn){
+            if pte.is_valid(){
+                return true;
+            }
+        }
+        vpn.step();
+    }
+    false
+}
+
+/// return true if any region in [start_va, end_va) isn't mapped
+pub fn any_unmapped(token: usize, start_va: VirtAddr, end_va: VirtAddr) -> bool{
+    let start_vpn = start_va.floor();
+    let end_vpn = end_va.ceil();
+    let mut vpn = start_vpn;
+    let page_table = PageTable::from_token(token);
+    while vpn.0 < end_vpn.0{
+        if let Some(pte) = page_table.translate(vpn){
+            if pte.is_valid(){
+            }
+            else{
+                return true;
+            }
+        }else{
+            return true
+        }
+        vpn.step();
+    }
+    false
 }

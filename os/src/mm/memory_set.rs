@@ -48,6 +48,22 @@ impl MemorySet {
     pub fn token(&self) -> usize {
         self.page_table.token()
     }
+
+    /// removed [start_va, end_va)
+    pub fn remove_framed_area(&mut self, start_va: VirtAddr, end_va: VirtAddr){
+        let start_vpn = start_va.floor();
+        let end_vpn = end_va.ceil();
+        let mut vpn = start_vpn; 
+        while vpn.0 < end_vpn.0{
+            for area in &mut self.areas{
+                if vpn < area.vpn_range.get_end() && vpn >= area.vpn_range.get_start(){
+                    area.unmap_one(&mut self.page_table, vpn);
+                    break;
+                }
+            }
+            vpn.step()
+        }
+    }
     /// Assume that no conflicts.
     pub fn insert_framed_area(
         &mut self,
@@ -303,7 +319,7 @@ impl MemorySet {
 }
 /// map area structure, controls a contiguous piece of virtual memory
 pub struct MapArea {
-    vpn_range: VPNRange,
+    pub vpn_range: VPNRange,
     data_frames: BTreeMap<VirtPageNum, FrameTracker>,
     map_type: MapType,
     map_perm: MapPermission,

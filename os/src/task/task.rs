@@ -9,6 +9,7 @@ use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+use crate::config::MAX_SYSCALL_NUM;
 
 const BIGSTRIDE: isize = 0x2380900;
 
@@ -79,7 +80,12 @@ pub struct TaskControlBlockInner {
     pub pass: isize,
 
     /// stride
-    pub stride: isize
+    pub stride: isize,
+    /// The task syscall times
+    pub task_runtime: usize,
+    /// The time that task first has been scheduled
+    pub task_syscall_times: [u32; MAX_SYSCALL_NUM]
+    
 }
 
 impl TaskControlBlockInner {
@@ -132,7 +138,9 @@ impl TaskControlBlock {
                     program_brk: user_sp,
                     priority: 16,
                     pass: BIGSTRIDE / 16,
-                    stride: 0
+                    stride: 0,
+                    task_runtime: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM]
                 })
             },
         };
@@ -208,7 +216,9 @@ impl TaskControlBlock {
                     program_brk: parent_inner.program_brk,
                     priority: 16,
                     pass: BIGSTRIDE / 16,
-                    stride: 0
+                    stride: 0,
+                    task_runtime: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM]
                 })
             },
         });
@@ -253,7 +263,9 @@ impl TaskControlBlock {
                     program_brk: ustack,
                     priority: 16,
                     pass: BIGSTRIDE / 16,
-                    stride: 0   
+                    stride: 0,
+                    task_runtime: 0,
+                    task_syscall_times: [0; MAX_SYSCALL_NUM]
                  })
             }
         });
@@ -313,6 +325,17 @@ impl TaskControlBlock {
         let mut inner = self.inner.exclusive_access();
         inner.stride += inner.pass;
     }
+
+    ///
+    pub fn syscall_times(&self) -> [u32; MAX_SYSCALL_NUM]{
+        self.inner_exclusive_access().task_syscall_times
+    }
+
+    ///
+    pub fn runtime(&self) -> usize{
+        self.inner_exclusive_access().task_runtime
+    }
+
 }
 
 #[derive(Copy, Clone, PartialEq)]
