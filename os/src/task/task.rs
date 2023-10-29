@@ -4,10 +4,13 @@ use super::{kstack_alloc, pid_alloc, KernelStack, PidHandle};
 use crate::config::TRAP_CONTEXT_BASE;
 use crate::mm::{MemorySet, PhysPageNum, VirtAddr, KERNEL_SPACE};
 use crate::sync::UPSafeCell;
+use crate::task::add_task;
 use crate::trap::{trap_handler, TrapContext};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::cell::RefMut;
+
+const BIGSTRIDE: isize = 0x2380900;
 
 /// Task control block structure
 ///
@@ -68,6 +71,15 @@ pub struct TaskControlBlockInner {
 
     /// Program break
     pub program_brk: usize,
+
+    /// priority
+    pub priority: isize,
+
+    /// pass
+    pub pass: isize,
+
+    /// stride
+    pub stride: isize
 }
 
 impl TaskControlBlockInner {
@@ -118,6 +130,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: user_sp,
                     program_brk: user_sp,
+                    priority: 16,
+                    pass: BIGSTRIDE / 16,
+                    stride: 0
                 })
             },
         };
@@ -191,6 +206,9 @@ impl TaskControlBlock {
                     exit_code: 0,
                     heap_bottom: parent_inner.heap_bottom,
                     program_brk: parent_inner.program_brk,
+                    priority: 16,
+                    pass: BIGSTRIDE / 16,
+                    stride: 0
                 })
             },
         });
@@ -204,6 +222,53 @@ impl TaskControlBlock {
         task_control_block
         // **** release child PCB
         // ---- release parent PCB
+    }
+
+    /// create a process from data indirectly
+    pub fn spawn(self: &Arc<Self>, data: &[u8]) -> usize{
+        //新建进程执行app
+        let pid = pid_alloc();
+        let ret = pid.0;
+        let kernel_stack = kstack_alloc();
+        let kernel_stack_top = kernel_stack.get_top();
+        let (memory_set, ustack, entry) = MemorySet::from_elf(data);
+        let trap_cx_ppn = memory_set
+            .translate(VirtAddr::from(TRAP_CONTEXT_BASE).into())
+            .unwrap()
+            .ppn();
+        let task_control_block = Arc::new(TaskControlBlock{
+            pid,
+            kernel_stack,
+            inner: unsafe {
+                UPSafeCell::new(TaskControlBlockInner {
+                    trap_cx_ppn,
+                    base_size: ustack, 
+                    task_cx: TaskContext::goto_trap_return(kernel_stack_top), 
+                    task_status: TaskStatus::Ready, 
+                    memory_set, 
+                    parent: Some(Arc::downgrade(self)), 
+                    children: Vec::new(), 
+                    exit_code: 0, 
+                    heap_bottom: ustack, 
+                    program_brk: ustack,
+                    priority: 16,
+                    pass: BIGSTRIDE / 16,
+                    stride: 0   
+                 })
+            }
+        });
+        let mut parent_inner = self.inner_exclusive_access();
+        parent_inner.children.push(task_control_block.clone());
+        let trap_cx = task_control_block.inner_exclusive_access().get_trap_cx();
+        let kernel_satp = KERNEL_SPACE.exclusive_access().token();
+        *trap_cx = TrapContext::app_init_context(
+            entry,
+            ustack,
+            kernel_satp,
+            kernel_stack_top, 
+            trap_handler as usize);
+        add_task(task_control_block);
+        ret
     }
 
     /// get pid of process
@@ -235,6 +300,18 @@ impl TaskControlBlock {
         } else {
             None
         }
+    }
+    /// set task's priority with prio
+    pub fn set_priority(self: &Arc<Self>, prio: isize){
+        let mut inner = self.inner.exclusive_access();
+        inner.priority = prio;
+        inner.pass = BIGSTRIDE / prio;
+    }
+
+    ///update task's stride
+    pub fn update_stride(self: &Arc<Self>){
+        let mut inner = self.inner.exclusive_access();
+        inner.stride += inner.pass;
     }
 }
 
