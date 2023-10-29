@@ -104,8 +104,8 @@ pub fn rust_main() -> ! {
     kernel_log_info();
     mm::init();
     mm::remap_test();
+    loader::list_apps();
     task::add_initproc();
-    println!("after initproc!");
     trap::init();
     trap::enable_timer_interrupt();
     timer::set_next_trigger();
